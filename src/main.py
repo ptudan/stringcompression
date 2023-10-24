@@ -1,6 +1,8 @@
 import re
 import csv
 import sys
+import math
+from difflib import SequenceMatcher
 
 def load_file_to_string(file_path):
     try:
@@ -15,6 +17,7 @@ def load_file_to_string(file_path):
 
 def create_frequency_map(csv_file_path, initial_rankings, loop_limit_ct):
     frequency_map = {}
+    ranking_map = {}
     
     for i, word in enumerate(initial_rankings):
         frequency_map[word] = i  
@@ -30,12 +33,13 @@ def create_frequency_map(csv_file_path, initial_rankings, loop_limit_ct):
 
             added = 0
             for i, row in enumerate(reader):
-                if i == loop_limit:
+                if added  == loop_limit:
                     break  
                 word, count = row
-                if(len(word) == 1 and added < 10 or len(word) == 2 and added < 100 or len(word) == 3 and added < 1000 or len(word) == 4 and added < 10000 or len(word) == 3 and added < 100000):
+                if(len(word) == 1 and added < 10 or added != 0 and len(word) < math.log(added, 10)):
                     continue
                 frequency_map[word] = added + csv_starting_rank 
+                ranking_map[added+csv_starting_rank] = word
                 added += 1
 
     except FileNotFoundError:
@@ -45,11 +49,65 @@ def create_frequency_map(csv_file_path, initial_rankings, loop_limit_ct):
         print(f"An error occurred while reading the file {csv_file_path}.")
         sys.exit(1)
 
-    return frequency_map
+    return frequency_map, ranking_map
+
+def decompress_string(compressed_string, code_word_map):
+    """
+    Decompress a previously compressed string using a mapping from codes to words.
+
+    :param compressed_string: The string output by the compression function.
+    :param code_word_map: A dictionary mapping codes (as strings) back to their original words.
+    :return: The decompressed string.
+    """
+    # This list will hold the decompressed parts of the string
+    decompressed_parts = []
+    
+    # We're assuming that the codes inserted in place of words are integers, 
+    # and are surrounded by two or three spaces (based on original formatting).
+    # The following regular expression will match such patterns in the text.
+    pattern = re.compile(r'(\s{1}|\s{3})(\d+)(\s?)')
+    
+    # This variable will track our position in the string as we process it
+    last_end = 0
+
+    # Search for all codes in the compressed string
+    for match in pattern.finditer(compressed_string):
+        # Add the text since the last code
+        decompressed_parts.append(compressed_string[last_end:match.start()])
+
+        # Update our position
+        last_end = match.end()
+
+        # Extract the code. It's the second group in the match: 
+        # one or two spaces, then the code, then possibly a space.
+        code = match.group(2)
+
+        # Replace the code with its word, if it exists in the map
+        if code in code_word_map:
+            word = code_word_map[code]
+            # Check formatting (capitalization)
+            if len(match.group(1)) == 3:  # three spaces indicates capitalization
+                word = word.capitalize()
+
+            # Add the word back to the stream
+            decompressed_parts.append(word)
+
+            # If there's a trailing space (e.g., for punctuation), add it back
+            if match.group(3):
+                decompressed_parts.append(match.group(3))
+
+        else:
+            # If for some reason the code isn't in the map, we leave it as is
+            decompressed_parts.append(match.group(0))
+
+    # Add any remaining text after the last code
+    decompressed_parts.append(compressed_string[last_end:])
+
+    # Combine all the parts back into a single string
+    return ''.join(decompressed_parts)
 
 def string_compress(input_string, word_freq_map):
     # Replace all double spaces with single spaces
-    input_string = input_string.replace('  ', ' ')
 
     # Prepare the words by splitting the string into words for iteration
     words = input_string.split(' ')
@@ -91,7 +149,7 @@ def string_compress(input_string, word_freq_map):
             if starts_with_capital(original_word):
                 processed_word = '   ' + replacement
             else:
-                processed_word = '  ' + replacement
+                processed_word = ' ' + replacement
 
             # If there was a punctuation at the start, we include it before spaces
             processed_word = punctuation_prefix + processed_word
@@ -102,8 +160,10 @@ def string_compress(input_string, word_freq_map):
 
             processed_words.append(processed_word)
         else:
+            if word.isnumeric():
+                processed_words.append("  " + punctuation_prefix + original_word + punctuation_suffix)
             # If the word is not in the map, we append it as it is, along with any separated punctuation
-            processed_words.append(punctuation_prefix + original_word + punctuation_suffix)
+            processed_words.append(" " + punctuation_prefix + original_word + punctuation_suffix)
 
     output_string = ''.join(processed_words)
 
@@ -112,7 +172,7 @@ def string_compress(input_string, word_freq_map):
 def print_byte_sizes(original_string, word_freq_map):
     # Compress the string
     compressed_string, words_replaced, total_words = string_compress(original_string, word_freq_map)
-
+    # print(compressed_string)
     # Encode the strings in UTF-8
     original_bytes = original_string.encode('utf-8')
     compressed_bytes = compressed_string.encode('utf-8')
@@ -157,6 +217,11 @@ def build_string_from_tsv(file_path):
         print(f"An error occurred while reading the file {file_path}.")
         return None  # Similar as above, depends on how you prefer to handle errors.
 
+def assure_lossless(original_string, word_freq_map, ranking_map):
+    compressed_string, _, _ = string_compress(original_string, word_freq_map)
+    decompressed = decompress_string(compressed_string, ranking_map)
+    print(f"similarity: {SequenceMatcher(None, original_string, decompressed).ratio()}")
+    return original_string == decompressed
 
 def main():
     if len(sys.argv) < 2:
@@ -176,18 +241,22 @@ def main():
                 texts.append(load_file_to_string(f))
     else:
         text = load_file_to_string(text_file_path)
+    
+    for i, t in enumerate(texts):
+        texts[i] = t.replace('  ', ' ')
 
     csv_file_path = 'unigram_freq.csv'
 
     initial_rankings = []  # ... and so on
 
     # round digits are for  raw unicode strategy, powers of 2 are for theorizing about lower level strategy in readme
-    sizes_to_try = [10, 64, 100, 1000, 10000, 16448, 100000]
+    sizes_to_try = [10, 64, 100, 1000, 10000, 16448, 100000, 1000000]
     for i, t in enumerate(texts):
         print(f"{files[i]}:")
         for s in sizes_to_try:
             print(f"for {s} size list:")
-            word_frequency_map = create_frequency_map(csv_file_path, initial_rankings, s)
+            word_frequency_map, ranking_map = create_frequency_map(csv_file_path, initial_rankings, s)
+            # print(f"lossless conversion: {assure_lossless(t, word_frequency_map, ranking_map)}")
             print_byte_sizes(t, word_frequency_map)
             print()
         print()

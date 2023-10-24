@@ -2,7 +2,7 @@ Basic Unicode size reduction algorithm
 
 uses standard dictionary to replace common strings with numbers and space prefixes
 
-naive algorithm just for changing the length of the raw unicode seems to work up to 25% byte reduction, see RESULTS.md
+naive algorithm just for changing the length of the raw unicode seems to work up to 21% byte reduction, see RESULTS.md
 
 could possibly reserve rare punctuation marks instead of using the space-based approach, and instead create a special unicode version for that char
 

@@ -1,4 +1,5 @@
 SKIPPED POW 10 OR LESS OPTIMIZATION:
+
     hp1:
     for 10 size list:
     - 0 words replaced out of 70803. 0.0000% replacement
